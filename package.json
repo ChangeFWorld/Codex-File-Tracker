@@ -1,0 +1,148 @@
+{
+  "name": "codex-file-change-tracker",
+  "displayName": "Codex File Change Tracker",
+  "description": "Track Codex apply_patch file changes per turn and restore recorded AI turns later.",
+  "version": "0.0.5",
+  "publisher": "local",
+  "license": "UNLICENSED",
+  "scripts": {
+    "check": "node --check src/utils.js && node --check src/snapshotStore.js && node --check src/codexWatcher.js && node --check src/treeView.js && node --check src/extension.js",
+    "package:vsix": "npx @vscode/vsce package",
+    "package:pre-release": "npx @vscode/vsce package --pre-release"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "^3.6.2"
+  },
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:codexSnapshotsView",
+    "onCommand:codexSnapshots.refresh",
+    "onCommand:codexSnapshots.clearAllSnapshots",
+    "onCommand:codexSnapshots.clearSessionSnapshots",
+    "onCommand:codexSnapshots.restoreSnapshot",
+    "onCommand:codexSnapshots.redoSnapshot",
+    "onCommand:codexSnapshots.reapplyRestoreOperation",
+    "onCommand:codexSnapshots.previewRestoreDiff",
+    "onCommand:codexSnapshots.openSnapshotManifest",
+    "onCommand:codexSnapshots.openSessionLog"
+  ],
+  "main": "./src/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "codexSnapshots.refresh",
+        "title": "Codex File Change Tracker: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "codexSnapshots.clearAllSnapshots",
+        "title": "Codex File Change Tracker: Clear All Records",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "codexSnapshots.clearSessionSnapshots",
+        "title": "Codex File Change Tracker: Clear Session Records"
+      },
+      {
+        "command": "codexSnapshots.restoreSnapshot",
+        "title": "Codex File Change Tracker: Restore Snapshot"
+      },
+      {
+        "command": "codexSnapshots.redoSnapshot",
+        "title": "Codex File Change Tracker: Reapply Snapshot"
+      },
+      {
+        "command": "codexSnapshots.reapplyRestoreOperation",
+        "title": "Codex File Change Tracker: Reapply Restore"
+      },
+      {
+        "command": "codexSnapshots.openSnapshotManifest",
+        "title": "Codex File Change Tracker: Open Snapshot Manifest"
+      },
+      {
+        "command": "codexSnapshots.openSessionLog",
+        "title": "Codex File Change Tracker: Open Source Session Log"
+      },
+      {
+        "command": "codexSnapshots.previewRestoreDiff",
+        "title": "Codex File Change Tracker: Preview Restore Diff"
+      }
+    ],
+    "views": {
+      "explorer": [
+        {
+          "id": "codexSnapshotsView",
+          "name": "Codex File Change Tracker"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "codexSnapshots.refresh",
+          "when": "view == codexSnapshotsView",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.clearAllSnapshots",
+          "when": "view == codexSnapshotsView",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "codexSnapshots.clearSessionSnapshots",
+          "when": "view == codexSnapshotsView && viewItem == codexSnapshotSession",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.restoreSnapshot",
+          "when": "view == codexSnapshotsView && viewItem == codexSnapshot",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.reapplyRestoreOperation",
+          "when": "view == codexSnapshotsView && viewItem == codexRestoreOp",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.openSnapshotManifest",
+          "when": "view == codexSnapshotsView && (viewItem == codexSnapshot || viewItem == codexSnapshotInactive)",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.openSessionLog",
+          "when": "view == codexSnapshotsView && (viewItem == codexSnapshot || viewItem == codexSnapshotInactive || viewItem == codexRestoreOp)",
+          "group": "navigation"
+        },
+        {
+          "command": "codexSnapshots.previewRestoreDiff",
+          "when": "view == codexSnapshotsView && (viewItem == codexSnapshot || viewItem == codexSnapshotInactive)",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Codex File Change Tracker",
+      "properties": {
+        "codexSnapshots.codexRoot": {
+          "type": "string",
+          "default": "~/.codex",
+          "markdownDescription": "Absolute path to the local Codex state directory that contains `sessions/`."
+        },
+        "codexSnapshots.scanIntervalMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 1000,
+          "markdownDescription": "How often to scan `.codex/sessions` for appended events."
+        }
+      }
+    }
+  }
+}

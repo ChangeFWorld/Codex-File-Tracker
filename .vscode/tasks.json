@@ -1,0 +1,18 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "check",
+      "type": "shell",
+      "command": "npm run check",
+      "problemMatcher": []
+    },
+    {
+      "label": "package:vsix",
+      "type": "shell",
+      "command": "npm run package:vsix",
+      "problemMatcher": [],
+      "group": "build"
+    }
+  ]
+}

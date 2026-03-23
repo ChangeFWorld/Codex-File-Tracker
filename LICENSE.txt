@@ -1,0 +1,3 @@
+UNLICENSED
+
+This project is a local prototype for personal/internal use.
