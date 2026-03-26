@@ -3,19 +3,22 @@
 const path = require("path");
 const vscode = require("vscode");
 
-const { formatTimestamp, shortText } = require("./utils");
+const { extractUserPrompt, formatTimestamp, shortText } = require("./utils");
 
 class SnapshotItem extends vscode.TreeItem {
   constructor(snapshot) {
-    super(formatTimestamp(snapshot.completedAt), vscode.TreeItemCollapsibleState.None);
-    this.snapshot = snapshot;
-    this.id = snapshot.id;
     const isRestoreOp = snapshot.type === "restore_op";
     const isInactive = !isRestoreOp && snapshot.active === false;
+    const prompt = extractUserPrompt(snapshot.prompt || snapshot.promptFull || "", 100);
+    const label = isRestoreOp ? shortText(snapshot.prompt || "Restore operation", 100) : prompt;
+
+    super(label, vscode.TreeItemCollapsibleState.None);
+    this.snapshot = snapshot;
+    this.id = snapshot.id;
     this.contextValue = isRestoreOp ? "codexRestoreOp" : isInactive ? "codexSnapshotInactive" : "codexSnapshot";
     this.description = isRestoreOp
-      ? snapshot.prompt
-      : `${isInactive ? "[inactive] " : ""}${snapshot.prompt}  ${snapshot.fileCount} file(s)`;
+      ? formatTimestamp(snapshot.completedAt)
+      : `${isInactive ? "[inactive] " : ""}${formatTimestamp(snapshot.completedAt)}  ${snapshot.fileCount} file(s)`;
     this.tooltip = [
       `Completed: ${snapshot.completedAt}`,
       snapshot.sessionTitle ? `Session: ${snapshot.sessionTitle}` : null,
@@ -23,7 +26,7 @@ class SnapshotItem extends vscode.TreeItem {
       isRestoreOp && snapshot.targetSnapshotId ? `Restored To: ${snapshot.targetSnapshotId}` : null,
       snapshot.turnId ? `Turn: ${snapshot.turnId}` : null,
       snapshot.sessionPath ? `Log: ${snapshot.sessionPath}` : null,
-      `Prompt: ${shortText(snapshot.prompt, 200)}`
+      `Prompt: ${shortText(snapshot.promptFull || snapshot.prompt, 200)}`
     ]
       .filter(Boolean)
       .join("\n");
@@ -44,7 +47,7 @@ class SnapshotItem extends vscode.TreeItem {
 
 class SessionItem extends vscode.TreeItem {
   constructor(group) {
-    super(group.title, vscode.TreeItemCollapsibleState.Expanded);
+    super(group.title, vscode.TreeItemCollapsibleState.Collapsed);
     this.group = group;
     this.id = `session:${group.sessionId}`;
     this.contextValue = "codexSnapshotSession";

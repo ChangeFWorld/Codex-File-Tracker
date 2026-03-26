@@ -7,7 +7,7 @@ const vscode = require("vscode");
 const { CodexWatcher } = require("./codexWatcher");
 const { SnapshotStore } = require("./snapshotStore");
 const { SnapshotTreeProvider } = require("./treeView");
-const { shortText } = require("./utils");
+const { extractUserPrompt, shortText } = require("./utils");
 
 let watcher;
 
@@ -29,7 +29,7 @@ async function activate(context) {
     }),
     vscode.commands.registerCommand("codexSnapshots.clearAllSnapshots", async () => {
       const choice = await vscode.window.showWarningMessage(
-        "Clear all recorded Codex snapshot history?",
+        "Clear all recorded Codex file change history?",
         { modal: true },
         "Clear All"
       );
@@ -39,7 +39,7 @@ async function activate(context) {
       await snapshotStore.clearAll();
       await watcher.scanOnce();
       treeProvider.refresh();
-      vscode.window.showInformationMessage("Cleared all Codex snapshot records.");
+      vscode.window.showInformationMessage("Cleared all Codex file change records.");
     }),
     vscode.commands.registerCommand("codexSnapshots.clearSessionSnapshots", async (sessionItem) => {
       const sessionId = extractSessionId(sessionItem);
@@ -50,7 +50,7 @@ async function activate(context) {
       const group = snapshotStore.findSessionGroup(sessionId);
       const label = group ? shortText(group.title, 80) : sessionId;
       const choice = await vscode.window.showWarningMessage(
-        `Clear all snapshot records for session "${label}"?`,
+        `Clear all file change records for session "${label}"?`,
         { modal: true },
         "Clear Session"
       );
@@ -80,7 +80,7 @@ async function activate(context) {
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: `Restoring AI turn ${shortText(selected.prompt, 40)}`,
+          title: `Restoring AI turn ${extractUserPrompt(selected.promptFull || selected.prompt, 40)}`,
           cancellable: false
         },
         async () => {
@@ -107,7 +107,7 @@ async function activate(context) {
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: `Reapplying AI turn ${shortText(selected.prompt, 40)}`,
+          title: `Reapplying AI turn ${extractUserPrompt(selected.promptFull || selected.prompt, 40)}`,
           cancellable: false
         },
         async () => {
@@ -126,7 +126,7 @@ async function activate(context) {
       }
 
       const choice = await vscode.window.showWarningMessage(
-        `Reapply the most recent restore for "${shortText(selected.prompt, 60)}"?`,
+        `Reapply the most recent restore for "${extractUserPrompt(selected.promptFull || selected.prompt, 60)}"?`,
         { modal: true },
         "Reapply"
       );
@@ -137,7 +137,7 @@ async function activate(context) {
       await vscode.window.withProgress(
         {
           location: vscode.ProgressLocation.Notification,
-          title: `Reapplying restore ${shortText(selected.prompt, 40)}`,
+          title: `Reapplying restore ${extractUserPrompt(selected.promptFull || selected.prompt, 40)}`,
           cancellable: false
         },
         async () => {
@@ -168,7 +168,7 @@ async function activate(context) {
     vscode.commands.registerCommand("codexSnapshots.openSessionLog", async (snapshot) => {
       const selected = normalizeSnapshotArg(snapshot) || await promptForSnapshot(snapshotStore);
       if (!selected || !selected.sessionPath) {
-        vscode.window.showWarningMessage("This snapshot does not have an associated session log path.");
+        vscode.window.showWarningMessage("This turn record does not have an associated session log path.");
         return;
       }
       if (!fs.existsSync(selected.sessionPath)) {
@@ -199,14 +199,14 @@ function deactivate() {
 }
 
 async function promptForSnapshot(snapshotStore) {
-  const snapshots = snapshotStore.listSnapshotsForCurrentWorkspace();
-  if (snapshots.length === 0) {
+  const turns = snapshotStore.listSnapshotsForCurrentWorkspace();
+  if (turns.length === 0) {
     vscode.window.showInformationMessage("No AI file records are available yet.");
     return null;
   }
   const picked = await vscode.window.showQuickPick(
-    snapshots.map((snapshot) => ({
-      label: snapshot.prompt,
+    turns.map((snapshot) => ({
+      label: extractUserPrompt(snapshot.prompt || "", 100),
       description: `${snapshot.completedAt}  ${snapshot.sessionTitle || snapshot.sessionId || ""}`,
       detail: `${snapshot.fileCount} file(s)`,
       snapshot
@@ -232,7 +232,7 @@ async function confirmApplyWithPreview(snapshotStore, plan, mode) {
 
   while (true) {
     const choice = await vscode.window.showWarningMessage(
-      `${actionLabel} ${changeCount} file(s) to the AI turn ${targetLabel} state for "${shortText(plan.snapshot.prompt, 60)}"?${conflictMessage}`,
+      `${actionLabel} ${changeCount} file(s) to the AI turn ${targetLabel} state for "${extractUserPrompt(plan.snapshot.promptFull || plan.snapshot.prompt, 60)}"?${conflictMessage}`,
       { modal: true },
       "Preview Diffs",
       actionLabel
@@ -260,7 +260,7 @@ async function openRestorePreview(snapshotStore, plan) {
       plan.entries.map((currentEntry) => ({
         label: currentEntry.path,
         description: currentEntry.kind,
-        detail: `${plan.snapshot.prompt} -> ${currentEntry.kind}`,
+        detail: `${extractUserPrompt(plan.snapshot.promptFull || plan.snapshot.prompt, 80)} -> ${currentEntry.kind}`,
         entry: currentEntry
       })),
       {

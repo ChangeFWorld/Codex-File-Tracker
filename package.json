@@ -2,11 +2,12 @@
   "name": "codex-file-change-tracker",
   "displayName": "Codex File Change Tracker",
   "description": "Track Codex apply_patch file changes per turn and restore recorded AI turns later.",
-  "version": "0.0.5",
+  "version": "0.0.8",
   "publisher": "local",
   "license": "UNLICENSED",
   "scripts": {
-    "check": "node --check src/utils.js && node --check src/snapshotStore.js && node --check src/codexWatcher.js && node --check src/treeView.js && node --check src/extension.js",
+    "check": "node --check src/utils.js && node --check src/applyPatchEvents.js && node --check src/snapshotStore.js && node --check src/codexWatcher.js && node --check src/treeView.js && node --check src/extension.js",
+    "test": "node test/run-tests.js",
     "package:vsix": "npx @vscode/vsce package",
     "package:pre-release": "npx @vscode/vsce package --pre-release"
   },
@@ -51,11 +52,11 @@
       },
       {
         "command": "codexSnapshots.restoreSnapshot",
-        "title": "Codex File Change Tracker: Restore Snapshot"
+        "title": "Codex File Change Tracker: Restore Turn"
       },
       {
         "command": "codexSnapshots.redoSnapshot",
-        "title": "Codex File Change Tracker: Reapply Snapshot"
+        "title": "Codex File Change Tracker: Reapply Turn"
       },
       {
         "command": "codexSnapshots.reapplyRestoreOperation",
@@ -63,7 +64,7 @@
       },
       {
         "command": "codexSnapshots.openSnapshotManifest",
-        "title": "Codex File Change Tracker: Open Snapshot Manifest"
+        "title": "Codex File Change Tracker: Open Turn Record"
       },
       {
         "command": "codexSnapshots.openSessionLog",
@@ -71,7 +72,7 @@
       },
       {
         "command": "codexSnapshots.previewRestoreDiff",
-        "title": "Codex File Change Tracker: Preview Restore Diff"
+        "title": "Codex File Change Tracker: Preview Turn Diff"
       }
     ],
     "views": {

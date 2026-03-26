@@ -5,7 +5,12 @@ const fsp = require("fs/promises");
 const path = require("path");
 const vscode = require("vscode");
 
-const { expandHome, shortText } = require("./utils");
+const {
+  didApplyPatchSucceed,
+  recordApplyPatchOutput,
+  registerApplyPatchCall
+} = require("./applyPatchEvents");
+const { expandHome, extractUserPrompt } = require("./utils");
 
 class CodexWatcher {
   constructor(snapshotStore, onSnapshotsChanged) {
@@ -128,7 +133,7 @@ class CodexWatcher {
     if (event.type === "event_msg" && event.payload && event.payload.type === "user_message") {
       const message = sanitizePrompt(event.payload.message || "");
       if (message) {
-        state.lastUserMessage = shortText(message, 140);
+        state.lastUserMessage = extractUserPrompt(message, 140);
         if (state.activeTurn) {
           state.activeTurn.prompt = state.lastUserMessage;
         }
@@ -145,7 +150,7 @@ class CodexWatcher {
           .join(" ");
         const sanitized = sanitizePrompt(userText);
         if (sanitized) {
-          state.lastUserMessage = shortText(sanitized, 140);
+          state.lastUserMessage = extractUserPrompt(sanitized, 140);
           if (state.activeTurn) {
             state.activeTurn.prompt = state.lastUserMessage;
           }
@@ -159,7 +164,8 @@ class CodexWatcher {
         turnId: event.payload.turn_id,
         startedAt: event.timestamp,
         prompt: state.lastUserMessage || "(no prompt)",
-        patches: []
+        patches: [],
+        pendingPatchCalls: new Map()
       };
       return;
     }
@@ -172,8 +178,20 @@ class CodexWatcher {
       event.payload.status === "completed"
     ) {
       if (state.activeTurn) {
-        state.activeTurn.patches.push(event.payload.input || "");
+        registerApplyPatchCall(state.activeTurn, event.payload);
       }
+      return;
+    }
+
+    if (
+      event.type === "response_item" &&
+      event.payload &&
+      event.payload.type === "custom_tool_call_output"
+    ) {
+      if (!state.activeTurn) {
+        return;
+      }
+      recordApplyPatchOutput(state.activeTurn, event.payload);
       return;
     }
 
@@ -254,5 +272,6 @@ function isRecentSession(stats) {
 }
 
 module.exports = {
-  CodexWatcher
+  CodexWatcher,
+  didApplyPatchSucceed
 };

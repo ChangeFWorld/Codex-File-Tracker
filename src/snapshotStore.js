@@ -11,7 +11,7 @@ const {
   reconstructBeforeFromPatch,
   renderAfterForAdd
 } = require("./patchUtils");
-const { expandHome, formatTimestamp, shortText } = require("./utils");
+const { expandHome, extractUserPrompt, formatTimestamp, shortText } = require("./utils");
 
 class SnapshotStore {
   constructor() {
@@ -149,7 +149,7 @@ class SnapshotStore {
       sessionId: options.sessionId,
       sessionTitle,
       turnId: options.turnId,
-      prompt: shortText(options.prompt || "(no prompt)", 140),
+      prompt: extractUserPrompt(options.prompt || "(no prompt)", 140),
       promptFull: options.prompt || "",
       completedAt: createdAt,
       startedAt: options.startedAt || null,
@@ -170,6 +170,7 @@ class SnapshotStore {
       sessionTitle: manifest.sessionTitle,
       turnId: manifest.turnId,
       prompt: manifest.prompt,
+      promptFull: manifest.promptFull,
       completedAt: manifest.completedAt,
       fileCount: manifest.files.length,
       manifestPath,
@@ -234,17 +235,27 @@ class SnapshotStore {
 
     let currentText = finalText;
     let existedBeforeTurn = firstOperation.kind !== "add";
+    let successfulReverseUpdates = 0;
 
     for (let index = operations.length - 1; index >= 0; index -= 1) {
       const operation = operations[index];
       if (operation.kind === "update") {
-        currentText = reconstructBeforeFromPatch(currentText, operation);
+        try {
+          currentText = reconstructBeforeFromPatch(currentText, operation);
+          successfulReverseUpdates += 1;
+        } catch (_error) {
+          continue;
+        }
         continue;
       }
       if (operation.kind === "add") {
         existedBeforeTurn = false;
         currentText = null;
       }
+    }
+
+    if (firstOperation.kind === "update" && successfulReverseUpdates === 0) {
+      return null;
     }
 
     const beforeBlobId = currentText === null ? null : await this.writeBlob(currentText);
@@ -518,6 +529,7 @@ class SnapshotStore {
       sessionTitle: snapshot.sessionTitle || loadSessionNames(this.sessionIndexPath).get(snapshot.sessionId) || snapshot.sessionId,
       turnId: null,
       prompt: `Restore to ${shortText(snapshot.prompt || snapshot.id, 80)}`,
+      promptFull: `Restore to ${snapshot.promptFull || snapshot.prompt || snapshot.id}`,
       completedAt,
       fileCount: snapshot.files ? snapshot.files.length : 0,
       manifestPath: null,

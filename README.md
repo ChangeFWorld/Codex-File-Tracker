@@ -1,74 +1,85 @@
 # Codex File Change Tracker
 
-Prototype VS Code extension that records Codex AI file changes turn by turn and lets you restore any recorded turn later.
+VS Code extension that records Codex `apply_patch` file changes turn by turn and lets you preview, restore, and reapply recorded AI turns later.
 
-Codex's AI model is powerful, but it can be scary to let it edit your files-amazingly, it does not have a reliable official "undo" button, which is quite a simple feature that every user would expect, and every other AI-assisted code editor provides. Simply relying on Git for tracking AI changes is not ideal, because
-you may not want to commit every single AI change, let alone there are files that are not tracked by Git.
-This extension is a temporary coarse solution to this problem, providing a turn-by-turn snapshot history of AI changes, and allowing users to restore any previous snapshot with a one click.
+> Warning: this is still a prototype. It can overwrite files if you restore the wrong turn. Keep backups for anything important.
 
-> **Warning:** Use at your own risk. This extension is a prototype, has not been fully reviewed, and may contain severe bugs that could lead to file corruption or data loss. Always ensure you have a backup of important files before use. Note that this extension does not track non-Codex changes, multi-agent edits, or shell-side effects; using it alongside these may lead to unexpected results.
+## What it does
 
+- Watches local `.codex/sessions/**/*.jsonl`
+- Detects completed Codex turns that used `apply_patch`
+- Stores per-file `before` and `after` bodies in `.codex/ai-file-history`
+- Shows history grouped by Codex session
+- Lets you preview diffs, restore an old AI turn, and reapply a restore
 
-
-
-
-## How it works
-
-This extension watches local `.codex/sessions/**/*.jsonl` files and looks for:
-
-- `event_msg.payload.type = "task_started"`
-- `response_item.payload.type = "custom_tool_call"` with `name = "apply_patch"`
-- `event_msg.payload.type = "task_complete"`
-
-When a completed turn contains `apply_patch`, the extension records the affected files into `.codex/ai-file-history`. For each supported file change, it stores:
-
-- the prompt for that turn
-- session id and turn id
-- the patch text
-- the full file body after the AI change
-- the inferred full file body before the AI change
-
-This version intentionally supports only `apply_patch`-based add/update flows. It does not try to track arbitrary shell-side effects.
-
-## Why JSONL Works
-
-If you open a raw session file directly, the first line is often a huge `session_meta.base_instructions` blob. The useful turn events are further down:
-
-- `task_started`: start of the AI turn
-- `user_message`: prompt text
-- `custom_tool_call` with `apply_patch`: changed file paths and patch body
-- `event_msg.payload.type = "task_complete"`: stable end-of-turn marker
-
-## Current scope
-
-- Records are created going forward, from the moment the extension is activated.
-- Historical turns are not backfilled.
-- Supported operations are `Add File` and `Update File` from `apply_patch`.
-- Diff preview shows the stored AI `before` and `after`, not the current working tree.
-- Restore can jump to any recorded AI turn, not just the latest one.
+The tracker only follows successful `apply_patch` edits. It does not try to recover arbitrary shell-side effects, deletes done outside `apply_patch`, or unrelated manual edits.
 
 ## Install
 
-### Development mode
+For normal use, install the VSIX that is already in this repository. You do not need `npm install`.
 
-1. Open `codex-session-snapshots` as a VS Code folder.
+1. In VS Code, open `Extensions`.
+2. Open the `...` menu.
+3. Choose `Install from VSIX...`.
+4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.8.vsix`.
+
+Or install from the command line:
+
+```bash
+code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.8.vsix --force
+```
+
+Then run `Developer: Reload Window`.
+
+## Development
+
+If you want to modify the extension itself:
+
+1. Open `codex-session-snapshots` in VS Code.
 2. Run `npm install`.
-3. Press `F5` and a new Extension Development Host window will open.
+3. Press `F5` to launch an Extension Development Host.
 
-Debug config lives in `.vscode/launch.json`, and helper tasks live in `.vscode/tasks.json`.
+Useful scripts:
 
-### Package as VSIX
+- `npm run check`
+- `npm test`
+- `npm run package:vsix`
 
-1. In `codex-session-snapshots`, run `npm install`.
-2. Run `npm run package:vsix`.
-3. Install the generated `.vsix`:
-   - command line: `code --install-extension codex-file-change-tracker-0.0.5.vsix`
-   - or VS Code: `Extensions -> ... -> Install from VSIX...`
+Debug config is in `.vscode/launch.json`, and helper tasks are in `.vscode/tasks.json`.
+
+## How it works
+
+The extension scans Codex session logs for:
+
+- `event_msg.payload.type = "task_started"`
+- `event_msg.payload.type = "user_message"`
+- `response_item.payload.type = "custom_tool_call"` where `name = "apply_patch"`
+- matching `custom_tool_call_output`
+- `event_msg.payload.type = "task_complete"`
+
+Only successful `apply_patch` calls are recorded. For each affected file, the tracker stores:
+
+- the user prompt for that turn
+- session id and turn id
+- the patch text
+- the full file body after the AI change
+- the reconstructed full file body before the AI change
+
+## Current scope
+
+- Records are created while the extension is active and can also be refreshed from recent session logs.
+- History is grouped by Codex session title when available.
+- Supported file operations are `Add File` and `Update File` from `apply_patch`.
+- Diff preview compares the stored `before` and `after` file bodies.
+- Restore can jump to any recorded AI turn, not just the latest one.
 
 ## Commands
 
-- `Codex Snapshots: Refresh`
-- `Codex Snapshots: Restore Snapshot`
-- `Codex Snapshots: Preview Restore Diff`
-- `Codex Snapshots: Open Snapshot Manifest`
-- `Codex Snapshots: Open Source Session Log`
+- `Codex File Change Tracker: Refresh`
+- `Codex File Change Tracker: Clear All Records`
+- `Codex File Change Tracker: Clear Session Records`
+- `Codex File Change Tracker: Restore Turn`
+- `Codex File Change Tracker: Reapply Restore`
+- `Codex File Change Tracker: Preview Turn Diff`
+- `Codex File Change Tracker: Open Turn Record`
+- `Codex File Change Tracker: Open Source Session Log`

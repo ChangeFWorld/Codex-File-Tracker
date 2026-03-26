@@ -36,6 +36,37 @@ function shortText(value, maxLength = 80) {
   return `${compact.slice(0, maxLength - 1)}...`;
 }
 
+function extractUserPrompt(value, maxLength = 140) {
+  const text = String(value || "").replace(/\r\n/g, "\n").trim();
+  if (!text) {
+    return "(no prompt)";
+  }
+
+  const requestMatch = [...text.matchAll(/(?:^|\n)#{0,6}\s*My request for Codex:\s*/g)].pop();
+  let candidate = requestMatch ? text.slice(requestMatch.index + requestMatch[0].length) : text;
+
+  candidate = candidate
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith("## Active file:") && !line.startsWith("## Open tabs:"))
+    .join(" ");
+
+  candidate = candidate.replace(/<image>/g, " ").trim();
+
+  if (!candidate) {
+    return "(no prompt)";
+  }
+
+  const compact = shortText(candidate, maxLength);
+  if (
+    compact.startsWith("# Context from my IDE setup:") ||
+    compact.startsWith("Context from my IDE setup:")
+  ) {
+    return "(prompt unavailable)";
+  }
+  return compact;
+}
+
 function sortByCreatedDesc(items) {
   return [...items].sort((left, right) => {
     if (left.createdAt === right.createdAt) {
@@ -70,6 +101,7 @@ module.exports = {
   isSubPath,
   normalizeSlashes,
   sha256,
+  extractUserPrompt,
   shortText,
   sortByCreatedDesc
 };
