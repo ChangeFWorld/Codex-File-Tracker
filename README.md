@@ -1,8 +1,12 @@
 # Codex File Change Tracker
 
-VS Code extension that records Codex `apply_patch` file changes turn by turn and lets you preview, restore, and reapply recorded AI turns later.
+Prototype VS Code extension that records Codex AI file changes turn by turn and lets you restore any recorded turn later.
 
-> Warning: this is still a prototype. It can overwrite files if you restore the wrong turn. Keep backups for anything important.
+Codex's AI model is powerful, but it can be scary to let it edit your files-amazingly, it does not have a reliable official "undo" button, which is quite a simple feature that every user would expect, and every other AI-assisted code editor provides. Simply relying on Git for tracking AI changes is not ideal, because
+you may not want to commit every single AI change, let alone there are files that are not tracked by Git.
+This extension is a temporary coarse solution to this problem, providing a turn-by-turn snapshot history of AI changes, and allowing users to restore any previous snapshot with a one click.
+
+> **Warning:** Use at your own risk. This extension is still a prototype, has not been fully reviewed, and may contain severe bugs that could lead to file corruption or data loss. Always ensure you have a backup of important files before use. It only tracks successful Codex `apply_patch` edits; it does not track unrelated manual edits, shell-side effects, multi-agent conflicts, or arbitrary deletes outside that flow. Using it alongside these may lead to unexpected results.
 
 ## What it does
 
