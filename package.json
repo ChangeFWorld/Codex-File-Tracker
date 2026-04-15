@@ -2,7 +2,7 @@
   "name": "codex-file-change-tracker",
   "displayName": "Codex File Change Tracker",
   "description": "Track Codex apply_patch file changes per turn and restore recorded AI turns later.",
-  "version": "0.0.10",
+  "version": "0.0.12",
   "publisher": "local",
   "license": "UNLICENSED",
   "scripts": {
@@ -139,7 +139,7 @@
         },
         "codexSnapshots.scanIntervalMs": {
           "type": "number",
-          "default": 5000,
+          "default": 2000,
           "minimum": 1000,
           "markdownDescription": "How often to scan `.codex/sessions` for appended events."
         }

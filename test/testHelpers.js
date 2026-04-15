@@ -40,7 +40,7 @@ function makeVscodeMock(codexRoot) {
               return codexRoot;
             }
             if (key === "scanIntervalMs") {
-              return 5000;
+              return 2000;
             }
             return fallback;
           }

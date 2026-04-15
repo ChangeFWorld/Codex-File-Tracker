@@ -13,6 +13,7 @@ This extension is a temporary coarse solution to this problem, providing a turn-
 - Watches local `.codex/sessions/**/*.jsonl`
 - Detects completed Codex turns that used `apply_patch`
 - Stores per-file `before` and `after` bodies in `.codex/ai-file-history`
+- Writes tracker runtime events and integrity warnings to `.codex/ai-file-history/tracker-events.jsonl`
 - Shows history grouped by Codex session
 - Lets you preview diffs, restore an old AI turn, and reapply a restore
 
@@ -25,12 +26,12 @@ For normal use, install the VSIX that is already in this repository. You do not 
 1. In VS Code, open `Extensions`.
 2. Open the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.10.vsix`.
+4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.12.vsix`.
 
 Or install from the command line:
 
 ```bash
-code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.10.vsix --force
+code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.12.vsix --force
 ```
 
 Then run `Developer: Reload Window`.
@@ -69,10 +70,14 @@ Only successful `apply_patch` calls are recorded. For each affected file, the tr
 - the patch text
 - the full file body after the AI change
 - the reconstructed full file body before the AI change
+- the captured pre-patch body when reconstruction is unavailable or needs cross-checking
+
+The default polling interval is `2000 ms`. Reconstruction is treated as the primary source for `before` content; captured pre-patch data is fallback evidence. If both exist and disagree, the tracker keeps both blob ids and appends a warning entry to `tracker-events.jsonl` for later debugging or manual recovery.
 
 ## Current scope
 
 - Records are created while the extension is active and can also be refreshed from recent session logs.
+- The watcher keeps one in-memory state object per live session log and prunes state for logs that disappear, so shorter polling does not keep accumulating stale session entries.
 - History is grouped by Codex session title when available.
 - Supported file operations are `Add File` and `Update File` from `apply_patch`.
 - Diff preview compares the stored `before` and `after` file bodies.

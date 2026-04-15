@@ -20,6 +20,7 @@ class SnapshotStore {
     this.blobsDir = null;
     this.previewDir = null;
     this.indexPath = null;
+    this.eventsLogPath = null;
     this.sessionIndexPath = null;
     this.index = null;
   }
@@ -33,6 +34,7 @@ class SnapshotStore {
     this.blobsDir = path.join(this.rootDir, "blobs");
     this.previewDir = path.join(this.rootDir, "previews");
     this.indexPath = path.join(this.rootDir, "index.json");
+    this.eventsLogPath = path.join(this.rootDir, "tracker-events.jsonl");
     this.sessionIndexPath = path.join(codexRoot, "session_index.jsonl");
 
     await fsp.mkdir(this.recordsDir, { recursive: true });
@@ -241,8 +243,10 @@ class SnapshotStore {
 
     let currentText = finalText;
     let successfulReverseUpdates = 0;
+    let reconstructedBeforeText;
+    let reconstructionFailed = false;
 
-    if (!hadPrePatchState) {
+    if (finalText !== null) {
       for (let index = operations.length - 1; index >= 0; index -= 1) {
         const operation = operations[index];
         if (operation.kind === "update") {
@@ -250,7 +254,9 @@ class SnapshotStore {
             currentText = reconstructBeforeFromPatch(currentText, operation);
             successfulReverseUpdates += 1;
           } catch (_error) {
-            continue;
+            reconstructionFailed = true;
+            successfulReverseUpdates = 0;
+            break;
           }
           continue;
         }
@@ -258,20 +264,50 @@ class SnapshotStore {
           currentText = null;
         }
       }
+      if (!reconstructionFailed) {
+        reconstructedBeforeText = currentText;
+      }
     }
 
-    if (firstOperation.kind === "update" && successfulReverseUpdates === 0) {
+    if (firstOperation.kind === "update" && successfulReverseUpdates === 0 && !hadPrePatchState) {
       return null;
     }
 
-    const beforeText = hadPrePatchState ? prePatchState.text : currentText;
     const recordKind = determineNetKind(existedBeforeTurn, finalText);
     if (!recordKind) {
       return null;
     }
 
+    const capturedBeforeText = hadPrePatchState ? prePatchState.text : undefined;
+    const selectedBefore = chooseBeforeText({
+      existedBeforeTurn,
+      capturedBeforeText,
+      reconstructedBeforeText
+    });
+    if (!selectedBefore.hasBeforeText) {
+      return null;
+    }
+
+    const beforeText = selectedBefore.beforeText;
     const beforeBlobId = beforeText === null ? null : await this.writeBlob(beforeText);
     const afterBlobId = finalText === null ? null : await this.writeBlob(finalText);
+    const capturedBeforeBlobId =
+      capturedBeforeText === undefined || capturedBeforeText === null ? null : await this.writeBlob(capturedBeforeText);
+    const reconstructedBeforeBlobId =
+      reconstructedBeforeText === undefined || reconstructedBeforeText === null
+        ? null
+        : await this.writeBlob(reconstructedBeforeText);
+
+    if (selectedBefore.integrityWarning) {
+      await this.appendTrackerEvent("prepatch_mismatch", {
+        filePath: finalPath,
+        originalPath: firstOperation.originalPath || firstOperation.path,
+        selectedSource: selectedBefore.beforeSource,
+        operationKinds: operations.map((operation) => operation.kind),
+        capturedBeforeBlobId,
+        reconstructedBeforeBlobId
+      });
+    }
 
     return {
       id: buildFileRecordId(finalPath, operations.map((op) => op.patchText).join("\n\n")),
@@ -281,9 +317,15 @@ class SnapshotStore {
       restoreMode: existedBeforeTurn ? "write" : "delete",
       restorePath: firstOperation.originalPath || firstOperation.path,
       deleteOnRestore: buildDeleteOnRestorePaths(operations, existedBeforeTurn, finalText),
+      deleteOnRedo: buildDeleteOnRedoPaths(operations, existedBeforeTurn, finalText),
       patch: operations.map((operation) => operation.patchText).join("\n\n"),
       beforeBlobId,
       afterBlobId,
+      beforeSource: selectedBefore.beforeSource,
+      capturedBeforeBlobId,
+      reconstructedBeforeBlobId,
+      integrityWarning: selectedBefore.integrityWarning,
+      integrityWarningReason: selectedBefore.integrityWarning ? "captured_before_mismatch" : null,
       changedAt: new Date().toISOString()
     };
   }
@@ -302,6 +344,22 @@ class SnapshotStore {
       return null;
     }
     return fsp.readFile(path.join(this.blobsDir, `${blobId}.txt`), "utf8");
+  }
+
+  async appendTrackerEvent(kind, payload) {
+    if (!this.eventsLogPath) {
+      return;
+    }
+    try {
+      const entry = {
+        timestamp: new Date().toISOString(),
+        kind,
+        payload
+      };
+      await fsp.appendFile(this.eventsLogPath, `${JSON.stringify(entry)}\n`, "utf8");
+    } catch (_error) {
+      // Runtime event logging is best-effort and must never block snapshot persistence.
+    }
   }
 
   async planRestore(turnId) {
@@ -366,6 +424,12 @@ class SnapshotStore {
         await fsp.mkdir(path.dirname(entry.path), { recursive: true });
         await fsp.writeFile(entry.path, afterText, "utf8");
         written += 1;
+      }
+      for (const deletePath of entry.deleteOnRedo || []) {
+        if (deletePath !== entry.path && fs.existsSync(deletePath)) {
+          await fsp.unlink(deletePath);
+          deleted += 1;
+        }
       }
     }
 
@@ -567,6 +631,15 @@ function buildDeleteOnRestorePaths(operations, existedBeforeTurn, finalText) {
   return [];
 }
 
+function buildDeleteOnRedoPaths(operations, existedBeforeTurn, finalText) {
+  const firstPath = operations[0].originalPath || operations[0].path;
+  const lastPath = operations[operations.length - 1].path;
+  if (existedBeforeTurn && finalText !== null && firstPath !== lastPath) {
+    return [firstPath];
+  }
+  return [];
+}
+
 function buildRecordId(sessionId, turnId, completedAt) {
   return crypto
     .createHash("sha1")
@@ -593,6 +666,54 @@ function safePreviewPath(filePath) {
 
 function previewDisplayName(filePath) {
   return path.basename(filePath) || "snapshot.txt";
+}
+
+function chooseBeforeText({ existedBeforeTurn, capturedBeforeText, reconstructedBeforeText }) {
+  const hasCaptured = capturedBeforeText !== undefined;
+  const hasReconstructedCandidate = reconstructedBeforeText !== undefined;
+  const hasReconstructed = hasReconstructedCandidate && (!existedBeforeTurn || reconstructedBeforeText !== null);
+
+  if (hasReconstructed) {
+    if (hasCaptured && capturedBeforeText !== reconstructedBeforeText) {
+      return {
+        hasBeforeText: true,
+        beforeText: reconstructedBeforeText,
+        beforeSource: "reconstructed",
+        integrityWarning: true
+      };
+    }
+    return {
+      hasBeforeText: true,
+      beforeText: reconstructedBeforeText,
+      beforeSource: "reconstructed",
+      integrityWarning: false
+    };
+  }
+
+  if (hasCaptured) {
+    return {
+      hasBeforeText: true,
+      beforeText: capturedBeforeText,
+      beforeSource: "captured",
+      integrityWarning: false
+    };
+  }
+
+  if (!existedBeforeTurn) {
+    return {
+      hasBeforeText: true,
+      beforeText: null,
+      beforeSource: "none",
+      integrityWarning: false
+    };
+  }
+
+  return {
+    hasBeforeText: false,
+    beforeText: null,
+    beforeSource: null,
+    integrityWarning: false
+  };
 }
 
 function collapseRepeatedOperations(operations) {
@@ -635,6 +756,12 @@ function normalizeManifestFile(file) {
     restoreMode,
     restorePath: file.restorePath || file.originalPath || file.path,
     deleteOnRestore,
+    deleteOnRedo:
+      Array.isArray(file.deleteOnRedo) && file.deleteOnRedo.length > 0
+        ? file.deleteOnRedo
+        : file.restorePath && file.restorePath !== file.path
+          ? [file.restorePath]
+          : [],
     beforeBlobId: file.beforeBlobId || null,
     afterBlobId: file.afterBlobId || null
   };

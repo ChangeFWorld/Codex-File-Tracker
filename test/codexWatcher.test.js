@@ -252,8 +252,272 @@ async function testWatcherSkipsAbortedTurnsWithoutSuccessfulPatch() {
   });
 }
 
+async function testWatcherLogsSnapshotRecordedForCompletedTurn() {
+  const codexRoot = makeTempDir();
+  const workRoot = path.join(codexRoot, "workspace");
+  fs.mkdirSync(workRoot, { recursive: true });
+  fs.writeFileSync(path.join(workRoot, "a.txt"), "old\n");
+
+  const vscode = makeVscodeMock(codexRoot);
+  await withMockedVscode(vscode, async () => {
+    const { CodexWatcher } = requireFresh("../src/codexWatcher");
+    const events = [];
+    const watcher = new CodexWatcher(
+      {
+        async createSnapshot() {
+          return { created: true, snapshot: { id: "snap-1" } };
+        },
+        async appendTrackerEvent(kind, payload) {
+          events.push({ kind, payload });
+        }
+      },
+      () => {}
+    );
+
+    const state = {
+      filePath: "/tmp/session.jsonl",
+      offset: 0,
+      remainder: "",
+      sessionId: "session-1",
+      lastUserMessage: "",
+      activeTurn: null
+    };
+
+    const eventsText = [
+      {
+        timestamp: "2026-03-25T10:00:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" }
+      },
+      {
+        timestamp: "2026-03-25T10:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "apply_patch",
+          status: "completed",
+          call_id: "ok",
+          input: `*** Begin Patch\n*** Update File: ${path.join(workRoot, "a.txt")}\n@@\n-old\n+new\n*** End Patch\n`
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "ok",
+          output: { output: "Success. Updated the following files:\nM /tmp/a.txt\n", metadata: { exit_code: 0 } }
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:04.000Z",
+        type: "event_msg",
+        payload: { type: "task_complete", last_agent_message: "done" }
+      }
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n") + "\n";
+
+    await watcher.consumeText(state, eventsText, { createRecords: true, notify: false });
+
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].kind, "snapshot_recorded");
+    assert.strictEqual(events[0].payload.interrupted, false);
+    assert.strictEqual(events[0].payload.turnId, "turn-1");
+    assert.strictEqual(events[0].payload.patchCount, 1);
+    assert.strictEqual(events[0].payload.completedAt, "2026-03-25T10:00:04.000Z");
+  });
+}
+
+async function testWatcherLogsSnapshotRecordedForAbortedTurn() {
+  const codexRoot = makeTempDir();
+  const workRoot = path.join(codexRoot, "workspace");
+  fs.mkdirSync(workRoot, { recursive: true });
+  fs.writeFileSync(path.join(workRoot, "a.txt"), "old\n");
+
+  const vscode = makeVscodeMock(codexRoot);
+  await withMockedVscode(vscode, async () => {
+    const { CodexWatcher } = requireFresh("../src/codexWatcher");
+    const events = [];
+    const watcher = new CodexWatcher(
+      {
+        async createSnapshot() {
+          return { created: true, snapshot: { id: "snap-1" } };
+        },
+        async appendTrackerEvent(kind, payload) {
+          events.push({ kind, payload });
+        }
+      },
+      () => {}
+    );
+
+    const state = {
+      filePath: "/tmp/session.jsonl",
+      offset: 0,
+      remainder: "",
+      sessionId: "session-1",
+      lastUserMessage: "",
+      activeTurn: null
+    };
+
+    const eventsText = [
+      {
+        timestamp: "2026-03-25T10:00:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" }
+      },
+      {
+        timestamp: "2026-03-25T10:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "apply_patch",
+          status: "completed",
+          call_id: "ok",
+          input: `*** Begin Patch\n*** Update File: ${path.join(workRoot, "a.txt")}\n@@\n-old\n+new\n*** End Patch\n`
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "ok",
+          output: { output: "Success. Updated the following files:\nM /tmp/a.txt\n", metadata: { exit_code: 0 } }
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:04.000Z",
+        type: "event_msg",
+        payload: { type: "turn_aborted" }
+      }
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n") + "\n";
+
+    await watcher.consumeText(state, eventsText, { createRecords: true, notify: false });
+
+    assert.strictEqual(events.length, 1);
+    assert.strictEqual(events[0].kind, "snapshot_recorded");
+    assert.strictEqual(events[0].payload.interrupted, true);
+    assert.strictEqual(events[0].payload.turnId, "turn-1");
+    assert.strictEqual(events[0].payload.patchCount, 1);
+    assert.strictEqual(events[0].payload.completedAt, "2026-03-25T10:00:04.000Z");
+  });
+}
+
+async function testWatcherPrunesMissingSessionStatesDuringScan() {
+  const codexRoot = makeTempDir();
+  const sessionsRoot = path.join(codexRoot, "sessions", "2026", "04", "16");
+  fs.mkdirSync(sessionsRoot, { recursive: true });
+  const sessionA = path.join(sessionsRoot, "a.jsonl");
+  const sessionB = path.join(sessionsRoot, "b.jsonl");
+  fs.writeFileSync(sessionA, "");
+  fs.writeFileSync(sessionB, "");
+
+  const vscode = makeVscodeMock(codexRoot);
+  await withMockedVscode(vscode, async () => {
+    const { CodexWatcher } = requireFresh("../src/codexWatcher");
+    const watcher = new CodexWatcher(
+      {
+        async createSnapshot() {
+          return { created: false, snapshot: null };
+        }
+      },
+      () => {}
+    );
+
+    await watcher.scanOnce();
+    assert.strictEqual(watcher.sessionStates.size, 2);
+
+    fs.unlinkSync(sessionB);
+    await watcher.scanOnce();
+
+    assert.strictEqual(watcher.sessionStates.size, 1);
+    assert.ok(watcher.sessionStates.has(sessionA));
+    assert.strictEqual(watcher.sessionStates.has(sessionB), false);
+  });
+}
+
+async function testWatcherIgnoresEventLoggingFailureAfterSnapshotCreation() {
+  const codexRoot = makeTempDir();
+  const workRoot = path.join(codexRoot, "workspace");
+  fs.mkdirSync(workRoot, { recursive: true });
+  fs.writeFileSync(path.join(workRoot, "a.txt"), "old\n");
+
+  const vscode = makeVscodeMock(codexRoot);
+  await withMockedVscode(vscode, async () => {
+    const { CodexWatcher } = requireFresh("../src/codexWatcher");
+    let created = false;
+    const watcher = new CodexWatcher(
+      {
+        async createSnapshot() {
+          created = true;
+          return { created: true, snapshot: { id: "snap-1" } };
+        },
+        async appendTrackerEvent() {
+          throw new Error("log failed");
+        }
+      },
+      () => {}
+    );
+
+    const state = {
+      filePath: "/tmp/session.jsonl",
+      offset: 0,
+      remainder: "",
+      sessionId: "session-1",
+      lastUserMessage: "",
+      activeTurn: null
+    };
+
+    const eventsText = [
+      {
+        timestamp: "2026-03-25T10:00:01.000Z",
+        type: "event_msg",
+        payload: { type: "task_started", turn_id: "turn-1" }
+      },
+      {
+        timestamp: "2026-03-25T10:00:02.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call",
+          name: "apply_patch",
+          status: "completed",
+          call_id: "ok",
+          input: `*** Begin Patch\n*** Update File: ${path.join(workRoot, "a.txt")}\n@@\n-old\n+new\n*** End Patch\n`
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:03.000Z",
+        type: "response_item",
+        payload: {
+          type: "custom_tool_call_output",
+          call_id: "ok",
+          output: { output: "Success. Updated the following files:\nM /tmp/a.txt\n", metadata: { exit_code: 0 } }
+        }
+      },
+      {
+        timestamp: "2026-03-25T10:00:04.000Z",
+        type: "event_msg",
+        payload: { type: "task_complete", last_agent_message: "done" }
+      }
+    ]
+      .map((event) => JSON.stringify(event))
+      .join("\n") + "\n";
+
+    await watcher.consumeText(state, eventsText, { createRecords: true, notify: false });
+
+    assert.strictEqual(created, true);
+  });
+}
+
 module.exports = {
   testWatcherConsumesOnlySuccessfulApplyPatchCallsAndUpdatesPrompt,
   testWatcherRecordsAbortedTurnsWhenSuccessfulPatchExists,
-  testWatcherSkipsAbortedTurnsWithoutSuccessfulPatch
+  testWatcherSkipsAbortedTurnsWithoutSuccessfulPatch,
+  testWatcherLogsSnapshotRecordedForCompletedTurn,
+  testWatcherLogsSnapshotRecordedForAbortedTurn,
+  testWatcherPrunesMissingSessionStatesDuringScan,
+  testWatcherIgnoresEventLoggingFailureAfterSnapshotCreation
 };

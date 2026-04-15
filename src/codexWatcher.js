@@ -25,7 +25,7 @@ class CodexWatcher {
   async start() {
     await this.scanOnce();
     const configuration = vscode.workspace.getConfiguration("codexSnapshots");
-    const intervalMs = Number(configuration.get("scanIntervalMs", 5000));
+    const intervalMs = Number(configuration.get("scanIntervalMs", 2000));
     this.timer = setInterval(() => {
       void this.scanOnce();
     }, intervalMs);
@@ -52,6 +52,7 @@ class CodexWatcher {
         return;
       }
       const files = await collectJsonlFiles(sessionsDir);
+      pruneMissingSessionStates(this.sessionStates, files);
       for (const filePath of files) {
         try {
           await this.processSessionFile(filePath);
@@ -203,6 +204,7 @@ class CodexWatcher {
         createRecords,
         notify,
         completedAt: event.timestamp,
+        interrupted: true,
         lastAgentMessage: "",
         notificationMessage: "Codex AI file record captured from an interrupted turn."
       });
@@ -214,6 +216,7 @@ class CodexWatcher {
         createRecords,
         notify,
         completedAt: event.timestamp,
+        interrupted: false,
         lastAgentMessage: event.payload.last_agent_message || "",
         notificationMessage: "Codex AI file record captured."
       });
@@ -247,6 +250,19 @@ class CodexWatcher {
     });
 
     if (result.created) {
+      if (this.snapshotStore && typeof this.snapshotStore.appendTrackerEvent === "function") {
+        try {
+          await this.snapshotStore.appendTrackerEvent("snapshot_recorded", {
+            sessionId: state.sessionId,
+            turnId: activeTurn.turnId,
+            completedAt: options.completedAt,
+            patchCount: activeTurn.patches.length,
+            interrupted: Boolean(options.interrupted)
+          });
+        } catch (_error) {
+          // Snapshot creation is the primary action; event logging is best-effort only.
+        }
+      }
       this.onSnapshotsChanged();
       if (options.notify) {
         vscode.window.showInformationMessage(options.notificationMessage || "Codex AI file record captured.");
@@ -306,6 +322,15 @@ function createInitialState(filePath) {
 
 function serializePrePatchFiles(prePatchFiles) {
   return Object.fromEntries(prePatchFiles || []);
+}
+
+function pruneMissingSessionStates(sessionStates, currentFiles) {
+  const liveFiles = new Set(currentFiles);
+  for (const filePath of sessionStates.keys()) {
+    if (!liveFiles.has(filePath)) {
+      sessionStates.delete(filePath);
+    }
+  }
 }
 
 async function collectJsonlFiles(rootDir) {
