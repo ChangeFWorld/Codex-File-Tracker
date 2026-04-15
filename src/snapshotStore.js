@@ -136,7 +136,7 @@ class SnapshotStore {
       return { created: false, snapshot: existing };
     }
 
-    const files = await this.captureFilesForTurn(options.patches || []);
+    const files = await this.captureFilesForTurn(options.patches || [], options.prePatchFiles || {});
     if (files.length === 0) {
       return { created: false, snapshot: null };
     }
@@ -182,15 +182,12 @@ class SnapshotStore {
     return { created: true, snapshot: indexEntry };
   }
 
-  async captureFilesForTurn(patches) {
+  async captureFilesForTurn(patches, prePatchFiles = {}) {
     const orderedOperations = [];
 
     for (const patchText of patches) {
       const operations = parseApplyPatch(patchText);
       for (const operation of operations) {
-        if (operation.kind === "delete") {
-          continue;
-        }
         orderedOperations.push(operation);
       }
     }
@@ -207,7 +204,11 @@ class SnapshotStore {
     const files = [];
     for (const [key, operations] of byKey.entries()) {
       try {
-        const record = await this.captureSingleFileHistory(key, collapseRepeatedOperations(operations));
+        const record = await this.captureSingleFileHistory(
+          key,
+          collapseRepeatedOperations(operations),
+          prePatchFiles[key] || null
+        );
         if (record) {
           files.push(record);
         }
@@ -219,7 +220,7 @@ class SnapshotStore {
     return files;
   }
 
-  async captureSingleFileHistory(key, operations) {
+  async captureSingleFileHistory(key, operations, prePatchState = null) {
     const firstOperation = operations[0];
     const lastOperation = operations[operations.length - 1];
     const finalPath = lastOperation.path;
@@ -229,28 +230,33 @@ class SnapshotStore {
       finalText = await fsp.readFile(finalPath, "utf8");
     } else if (lastOperation.kind === "add") {
       finalText = renderAfterForAdd(lastOperation);
-    } else {
+    }
+
+    const hadPrePatchState = prePatchState && typeof prePatchState.existed === "boolean";
+    const existedBeforeTurn = hadPrePatchState ? prePatchState.existed : firstOperation.kind !== "add";
+
+    if (!existedBeforeTurn && finalText === null) {
       return null;
     }
 
     let currentText = finalText;
-    let existedBeforeTurn = firstOperation.kind !== "add";
     let successfulReverseUpdates = 0;
 
-    for (let index = operations.length - 1; index >= 0; index -= 1) {
-      const operation = operations[index];
-      if (operation.kind === "update") {
-        try {
-          currentText = reconstructBeforeFromPatch(currentText, operation);
-          successfulReverseUpdates += 1;
-        } catch (_error) {
+    if (!hadPrePatchState) {
+      for (let index = operations.length - 1; index >= 0; index -= 1) {
+        const operation = operations[index];
+        if (operation.kind === "update") {
+          try {
+            currentText = reconstructBeforeFromPatch(currentText, operation);
+            successfulReverseUpdates += 1;
+          } catch (_error) {
+            continue;
+          }
           continue;
         }
-        continue;
-      }
-      if (operation.kind === "add") {
-        existedBeforeTurn = false;
-        currentText = null;
+        if (operation.kind === "add") {
+          currentText = null;
+        }
       }
     }
 
@@ -258,17 +264,23 @@ class SnapshotStore {
       return null;
     }
 
-    const beforeBlobId = currentText === null ? null : await this.writeBlob(currentText);
+    const beforeText = hadPrePatchState ? prePatchState.text : currentText;
+    const recordKind = determineNetKind(existedBeforeTurn, finalText);
+    if (!recordKind) {
+      return null;
+    }
+
+    const beforeBlobId = beforeText === null ? null : await this.writeBlob(beforeText);
     const afterBlobId = finalText === null ? null : await this.writeBlob(finalText);
 
     return {
       id: buildFileRecordId(finalPath, operations.map((op) => op.patchText).join("\n\n")),
       path: finalPath,
       originalPath: firstOperation.originalPath || firstOperation.path,
-      kind: existedBeforeTurn ? lastOperation.kind : "add",
+      kind: recordKind,
       restoreMode: existedBeforeTurn ? "write" : "delete",
       restorePath: firstOperation.originalPath || firstOperation.path,
-      deleteOnRestore: existedBeforeTurn ? buildDeleteOnRestorePaths(operations) : [finalPath],
+      deleteOnRestore: buildDeleteOnRestorePaths(operations, existedBeforeTurn, finalText),
       patch: operations.map((operation) => operation.patchText).join("\n\n"),
       beforeBlobId,
       afterBlobId,
@@ -542,10 +554,13 @@ class SnapshotStore {
   }
 }
 
-function buildDeleteOnRestorePaths(operations) {
+function buildDeleteOnRestorePaths(operations, existedBeforeTurn, finalText) {
   const firstPath = operations[0].originalPath || operations[0].path;
   const lastPath = operations[operations.length - 1].path;
-  if (lastPath !== firstPath) {
+  if (!existedBeforeTurn && finalText !== null) {
+    return [lastPath];
+  }
+  if (lastPath !== firstPath && existedBeforeTurn) {
     return [lastPath];
   }
   return [];
@@ -594,8 +609,14 @@ function collapseRepeatedOperations(operations) {
 }
 
 function normalizeManifestFile(file) {
-  const includesAdd = typeof file.patch === "string" && file.patch.includes("*** Add File: ");
-  const restoreMode = file.restoreMode === "delete" || (includesAdd && !file.beforeBlobId) ? "delete" : "write";
+  const restoreMode =
+    file.restoreMode === "delete"
+      ? "delete"
+      : file.restoreMode === "write"
+        ? "write"
+        : file.kind === "add" && !file.beforeBlobId
+          ? "delete"
+          : "write";
   const deleteOnRestore =
     Array.isArray(file.deleteOnRestore) && file.deleteOnRestore.length > 0
       ? file.deleteOnRestore
@@ -612,6 +633,19 @@ function normalizeManifestFile(file) {
     beforeBlobId: file.beforeBlobId || null,
     afterBlobId: file.afterBlobId || null
   };
+}
+
+function determineNetKind(existedBeforeTurn, finalText) {
+  if (!existedBeforeTurn && finalText !== null) {
+    return "add";
+  }
+  if (existedBeforeTurn && finalText === null) {
+    return "delete";
+  }
+  if (existedBeforeTurn && finalText !== null) {
+    return "update";
+  }
+  return null;
 }
 
 function loadSessionNames(sessionIndexPath) {

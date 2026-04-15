@@ -211,7 +211,60 @@ async function testSnapshotStoreRestoreAddThenDeleteOnRestore() {
   });
 }
 
+async function testSnapshotStoreTreatsDeleteThenAddSamePathAsUpdateUsingPrePatchState() {
+  const codexRoot = makeTempDir();
+  const vscode = makeVscodeMock(codexRoot);
+
+  await withMockedVscode(vscode, async () => {
+    const { SnapshotStore } = requireFresh("../src/snapshotStore");
+    const store = new SnapshotStore();
+    await store.initialize();
+
+    const workRoot = path.join(codexRoot, "workspace");
+    fs.mkdirSync(workRoot, { recursive: true });
+    const filePath = path.join(workRoot, "report.txt");
+    const beforeText = "old version\n";
+    const afterText = "new version\n";
+    fs.writeFileSync(filePath, afterText);
+
+    const result = await store.createSnapshot({
+      sessionId: "session-3",
+      turnId: "turn-3",
+      prompt: "replace file",
+      completedAt: "2026-03-25T12:00:00.000Z",
+      patches: [
+        [
+          "*** Begin Patch",
+          `*** Delete File: ${filePath}`,
+          `*** Add File: ${filePath}`,
+          "+new version",
+          "*** End Patch"
+        ].join("\n")
+      ],
+      prePatchFiles: {
+        [filePath]: {
+          existed: true,
+          text: beforeText
+        }
+      }
+    });
+
+    assert.strictEqual(result.created, true);
+    const manifest = JSON.parse(fs.readFileSync(result.snapshot.manifestPath, "utf8"));
+    assert.strictEqual(manifest.files.length, 1);
+    assert.strictEqual(manifest.files[0].kind, "update");
+    assert.strictEqual(manifest.files[0].restoreMode, "write");
+    assert.strictEqual(await store.readBlob(manifest.files[0].beforeBlobId), beforeText);
+    assert.strictEqual(await store.readBlob(manifest.files[0].afterBlobId), afterText);
+
+    const restoreResult = await store.restoreSnapshot(result.snapshot.id);
+    assert.strictEqual(restoreResult.deleted, 0);
+    assert.strictEqual(fs.readFileSync(filePath, "utf8"), beforeText);
+  });
+}
+
 module.exports = {
   testSnapshotStoreRestoreAndReapplyStateMachine,
-  testSnapshotStoreRestoreAddThenDeleteOnRestore
+  testSnapshotStoreRestoreAddThenDeleteOnRestore,
+  testSnapshotStoreTreatsDeleteThenAddSamePathAsUpdateUsingPrePatchState
 };

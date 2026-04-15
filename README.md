@@ -25,12 +25,12 @@ For normal use, install the VSIX that is already in this repository. You do not 
 1. In VS Code, open `Extensions`.
 2. Open the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.8.vsix`.
+4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.9.vsix`.
 
 Or install from the command line:
 
 ```bash
-code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.8.vsix --force
+code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.9.vsix --force
 ```
 
 Then run `Developer: Reload Window`.

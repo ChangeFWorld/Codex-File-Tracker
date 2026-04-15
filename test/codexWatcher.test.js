@@ -1,11 +1,18 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
 
-const { makeVscodeMock, requireFresh, withMockedVscode } = require("./testHelpers");
+const { makeTempDir, makeVscodeMock, requireFresh, withMockedVscode } = require("./testHelpers");
 
 async function testWatcherConsumesOnlySuccessfulApplyPatchCallsAndUpdatesPrompt() {
-  const vscode = makeVscodeMock("/tmp/mock-codex-root");
+  const codexRoot = makeTempDir();
+  const workRoot = path.join(codexRoot, "workspace");
+  fs.mkdirSync(workRoot, { recursive: true });
+  fs.writeFileSync(path.join(workRoot, "a.txt"), "old\n");
+
+  const vscode = makeVscodeMock(codexRoot);
   await withMockedVscode(vscode, async () => {
     const { CodexWatcher } = requireFresh("../src/codexWatcher");
     const calls = [];
@@ -52,7 +59,7 @@ async function testWatcherConsumesOnlySuccessfulApplyPatchCallsAndUpdatesPrompt(
           name: "apply_patch",
           status: "completed",
           call_id: "ok",
-          input: "*** Begin Patch\n*** Update File: /tmp/a.txt\n@@\n-old\n+new\n*** End Patch\n"
+          input: `*** Begin Patch\n*** Update File: ${path.join(workRoot, "a.txt")}\n@@\n-old\n+new\n*** End Patch\n`
         }
       },
       {
@@ -72,7 +79,7 @@ async function testWatcherConsumesOnlySuccessfulApplyPatchCallsAndUpdatesPrompt(
           name: "apply_patch",
           status: "completed",
           call_id: "bad",
-          input: "*** Begin Patch\n*** Update File: /tmp/b.txt\n@@\n-old\n+new\n*** End Patch\n"
+          input: `*** Begin Patch\n*** Update File: ${path.join(workRoot, "b.txt")}\n@@\n-old\n+new\n*** End Patch\n`
         }
       },
       {
@@ -99,7 +106,11 @@ async function testWatcherConsumesOnlySuccessfulApplyPatchCallsAndUpdatesPrompt(
     assert.strictEqual(calls[0].turnId, "turn-1");
     assert.strictEqual(calls[0].prompt, "real prompt");
     assert.strictEqual(calls[0].patches.length, 1);
-    assert.ok(calls[0].patches[0].includes("/tmp/a.txt"));
+    assert.ok(calls[0].patches[0].includes(path.join(workRoot, "a.txt")));
+    assert.deepStrictEqual(calls[0].prePatchFiles[path.join(workRoot, "a.txt")], {
+      existed: true,
+      text: "old\n"
+    });
     assert.strictEqual(state.activeTurn, null);
   });
 }

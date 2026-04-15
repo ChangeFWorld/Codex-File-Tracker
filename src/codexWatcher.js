@@ -10,6 +10,7 @@ const {
   recordApplyPatchOutput,
   registerApplyPatchCall
 } = require("./applyPatchEvents");
+const { parseApplyPatch } = require("./patchUtils");
 const { expandHome, extractUserPrompt } = require("./utils");
 
 class CodexWatcher {
@@ -165,7 +166,8 @@ class CodexWatcher {
         startedAt: event.timestamp,
         prompt: state.lastUserMessage || "(no prompt)",
         patches: [],
-        pendingPatchCalls: new Map()
+        pendingPatchCalls: new Map(),
+        prePatchFiles: new Map()
       };
       return;
     }
@@ -179,6 +181,7 @@ class CodexWatcher {
     ) {
       if (state.activeTurn) {
         registerApplyPatchCall(state.activeTurn, event.payload);
+        await this.capturePrePatchFiles(state.activeTurn, event.payload.input || "");
       }
       return;
     }
@@ -214,7 +217,8 @@ class CodexWatcher {
         completedAt: event.timestamp,
         sessionPath: state.filePath,
         lastAgentMessage: event.payload.last_agent_message || "",
-        patches: activeTurn.patches
+        patches: activeTurn.patches,
+        prePatchFiles: serializePrePatchFiles(activeTurn.prePatchFiles)
       });
       state.activeTurn = null;
       if (result.created) {
@@ -223,6 +227,33 @@ class CodexWatcher {
           vscode.window.showInformationMessage("Codex AI file record captured.");
         }
       }
+    }
+  }
+
+  async capturePrePatchFiles(activeTurn, patchText) {
+    if (!activeTurn || !patchText) {
+      return;
+    }
+
+    const operations = parseApplyPatch(patchText);
+    for (const operation of operations) {
+      const probePath = operation.originalPath || operation.path;
+      if (!probePath || activeTurn.prePatchFiles.has(probePath)) {
+        continue;
+      }
+
+      if (fs.existsSync(probePath)) {
+        activeTurn.prePatchFiles.set(probePath, {
+          existed: true,
+          text: await fsp.readFile(probePath, "utf8")
+        });
+        continue;
+      }
+
+      activeTurn.prePatchFiles.set(probePath, {
+        existed: false,
+        text: null
+      });
     }
   }
 }
@@ -247,6 +278,10 @@ function createInitialState(filePath) {
     lastUserMessage: "",
     activeTurn: null
   };
+}
+
+function serializePrePatchFiles(prePatchFiles) {
+  return Object.fromEntries(prePatchFiles || []);
 }
 
 async function collectJsonlFiles(rootDir) {
