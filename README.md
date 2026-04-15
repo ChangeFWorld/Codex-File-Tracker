@@ -25,12 +25,12 @@ For normal use, install the VSIX that is already in this repository. You do not 
 1. In VS Code, open `Extensions`.
 2. Open the `...` menu.
 3. Choose `Install from VSIX...`.
-4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.9.vsix`.
+4. Select the packaged file in this repo, for example `codex-file-change-tracker-0.0.10.vsix`.
 
 Or install from the command line:
 
 ```bash
-code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.9.vsix --force
+code --install-extension /absolute/path/to/codex-file-change-tracker-0.0.10.vsix --force
 ```
 
 Then run `Developer: Reload Window`.
@@ -60,6 +60,7 @@ The extension scans Codex session logs for:
 - `response_item.payload.type = "custom_tool_call"` where `name = "apply_patch"`
 - matching `custom_tool_call_output`
 - `event_msg.payload.type = "task_complete"`
+- `event_msg.payload.type = "turn_aborted"` when a turn was interrupted after successful edits
 
 Only successful `apply_patch` calls are recorded. For each affected file, the tracker stores:
 

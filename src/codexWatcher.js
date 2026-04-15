@@ -199,33 +199,57 @@ class CodexWatcher {
     }
 
     if (event.type === "event_msg" && event.payload && event.payload.type === "turn_aborted") {
-      state.activeTurn = null;
+      await this.finalizeActiveTurn(state, {
+        createRecords,
+        notify,
+        completedAt: event.timestamp,
+        lastAgentMessage: "",
+        notificationMessage: "Codex AI file record captured from an interrupted turn."
+      });
       return;
     }
 
     if (event.type === "event_msg" && event.payload && event.payload.type === "task_complete") {
-      const activeTurn = state.activeTurn;
-      if (!activeTurn || !createRecords) {
-        state.activeTurn = null;
-        return;
-      }
-      const result = await this.snapshotStore.createSnapshot({
-        sessionId: state.sessionId,
-        turnId: activeTurn.turnId,
-        prompt: activeTurn.prompt,
-        startedAt: activeTurn.startedAt,
+      await this.finalizeActiveTurn(state, {
+        createRecords,
+        notify,
         completedAt: event.timestamp,
-        sessionPath: state.filePath,
         lastAgentMessage: event.payload.last_agent_message || "",
-        patches: activeTurn.patches,
-        prePatchFiles: serializePrePatchFiles(activeTurn.prePatchFiles)
+        notificationMessage: "Codex AI file record captured."
       });
-      state.activeTurn = null;
-      if (result.created) {
-        this.onSnapshotsChanged();
-        if (notify) {
-          vscode.window.showInformationMessage("Codex AI file record captured.");
-        }
+    }
+  }
+
+  async finalizeActiveTurn(state, options) {
+    const activeTurn = state.activeTurn;
+    if (!activeTurn) {
+      return;
+    }
+
+    state.activeTurn = null;
+    if (!options || !options.createRecords) {
+      return;
+    }
+    if (!activeTurn.patches || activeTurn.patches.length === 0) {
+      return;
+    }
+
+    const result = await this.snapshotStore.createSnapshot({
+      sessionId: state.sessionId,
+      turnId: activeTurn.turnId,
+      prompt: activeTurn.prompt,
+      startedAt: activeTurn.startedAt,
+      completedAt: options.completedAt,
+      sessionPath: state.filePath,
+      lastAgentMessage: options.lastAgentMessage || "",
+      patches: activeTurn.patches,
+      prePatchFiles: serializePrePatchFiles(activeTurn.prePatchFiles)
+    });
+
+    if (result.created) {
+      this.onSnapshotsChanged();
+      if (options.notify) {
+        vscode.window.showInformationMessage(options.notificationMessage || "Codex AI file record captured.");
       }
     }
   }

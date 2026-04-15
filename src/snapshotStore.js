@@ -399,10 +399,11 @@ class SnapshotStore {
 
   async prepareDiffPreview(plan, entry) {
     const previewRoot = path.join(this.previewDir, plan.snapshotId, safePreviewPath(entry.path));
-    const beforePath = path.join(previewRoot, "before.txt");
-    const afterPath = path.join(previewRoot, "after.txt");
+    const beforePath = path.join(previewRoot, "before", previewDisplayName(entry.path));
+    const afterPath = path.join(previewRoot, "after", previewDisplayName(entry.path));
 
-    await fsp.mkdir(previewRoot, { recursive: true });
+    await fsp.mkdir(path.dirname(beforePath), { recursive: true });
+    await fsp.mkdir(path.dirname(afterPath), { recursive: true });
     await fsp.writeFile(beforePath, (await this.readBlob(entry.beforeBlobId)) || "", "utf8");
     await fsp.writeFile(afterPath, (await this.readBlob(entry.afterBlobId)) || "", "utf8");
 
@@ -588,6 +589,10 @@ function buildFileRecordId(filePath, patchText) {
 
 function safePreviewPath(filePath) {
   return crypto.createHash("sha1").update(filePath).digest("hex").slice(0, 12);
+}
+
+function previewDisplayName(filePath) {
+  return path.basename(filePath) || "snapshot.txt";
 }
 
 function collapseRepeatedOperations(operations) {
