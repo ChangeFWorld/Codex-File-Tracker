@@ -2,7 +2,7 @@
   "name": "codex-file-change-tracker",
   "displayName": "Codex File Change Tracker",
   "description": "Track Codex apply_patch file changes per turn and restore recorded AI turns later.",
-  "version": "0.0.12",
+  "version": "0.0.13",
   "publisher": "local",
   "license": "UNLICENSED",
   "scripts": {

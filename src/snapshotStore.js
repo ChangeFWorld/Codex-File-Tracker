@@ -194,13 +194,27 @@ class SnapshotStore {
       }
     }
 
+    const aliases = new Map();
+    const resolveKey = (candidate) => {
+      let current = candidate;
+      while (aliases.has(current)) {
+        current = aliases.get(current);
+      }
+      return current;
+    };
+
     const byKey = new Map();
     for (const operation of orderedOperations) {
-      const key = operation.originalPath || operation.path;
+      const originalKey = operation.originalPath || operation.path;
+      const key = resolveKey(originalKey);
       if (!byKey.has(key)) {
         byKey.set(key, []);
       }
       byKey.get(key).push(operation);
+      if (operation.originalPath && operation.originalPath !== operation.path) {
+        const canonical = resolveKey(key);
+        aliases.set(operation.path, canonical);
+      }
     }
 
     const files = [];
@@ -235,7 +249,12 @@ class SnapshotStore {
     }
 
     const hadPrePatchState = prePatchState && typeof prePatchState.existed === "boolean";
-    const existedBeforeTurn = hadPrePatchState ? prePatchState.existed : firstOperation.kind !== "add";
+    const existedBeforeTurn =
+      firstOperation.kind === "add"
+        ? false
+        : hadPrePatchState
+          ? prePatchState.existed
+          : true;
 
     if (!existedBeforeTurn && finalText === null) {
       return null;
@@ -445,16 +464,17 @@ class SnapshotStore {
     const conflicts = [];
 
     for (const entry of plan.entries) {
-      const expected = await this.getExpectedCurrentText(entry, mode);
-      const comparePath = this.getComparePath(entry, mode);
-      const current = fs.existsSync(comparePath) ? await fsp.readFile(comparePath, "utf8") : null;
-      if (current !== expected) {
-        conflicts.push({
-          path: comparePath,
-          mode,
-          hasCurrent: current !== null,
-          hasExpected: expected !== null
-        });
+      const comparisons = await this.getConflictComparisons(entry, mode);
+      for (const comparison of comparisons) {
+        const current = fs.existsSync(comparison.path) ? await fsp.readFile(comparison.path, "utf8") : null;
+        if (current !== comparison.expected) {
+          conflicts.push({
+            path: comparison.path,
+            mode,
+            hasCurrent: current !== null,
+            hasExpected: comparison.expected !== null
+          });
+        }
       }
     }
 
@@ -480,6 +500,33 @@ class SnapshotStore {
 
   getComparePath(entry, mode) {
     return mode === "redo" ? entry.restorePath : entry.path;
+  }
+
+  async getConflictComparisons(entry, mode) {
+    if (mode === "redo") {
+      const comparisons = [
+        {
+          path: entry.path,
+          expected: await this.readBlob(entry.afterBlobId)
+        }
+      ];
+      for (const deletePath of entry.deleteOnRedo || []) {
+        if (deletePath !== entry.path) {
+          comparisons.push({
+            path: deletePath,
+            expected: null
+          });
+        }
+      }
+      return comparisons;
+    }
+
+    return [
+      {
+        path: entry.path,
+        expected: await this.readBlob(entry.afterBlobId)
+      }
+    ];
   }
 
   async getExpectedCurrentText(entry, mode) {

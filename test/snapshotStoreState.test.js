@@ -263,6 +263,52 @@ async function testSnapshotStoreTreatsDeleteThenAddSamePathAsUpdateUsingPrePatch
   });
 }
 
+async function testSnapshotStoreKeepsPureAddAsAddEvenWhenCapturedPrePatchLooksExisting() {
+  const codexRoot = makeTempDir();
+  const vscode = makeVscodeMock(codexRoot);
+
+  await withMockedVscode(vscode, async () => {
+    const { SnapshotStore } = requireFresh("../src/snapshotStore");
+    const store = new SnapshotStore();
+    await store.initialize();
+
+    const workRoot = path.join(codexRoot, "workspace");
+    fs.mkdirSync(workRoot, { recursive: true });
+    const filePath = path.join(workRoot, "added.txt");
+    const afterText = "created\n";
+    fs.writeFileSync(filePath, afterText);
+
+    const result = await store.createSnapshot({
+      sessionId: "session-add-late-prepatch",
+      turnId: "turn-add-late-prepatch",
+      prompt: "add file",
+      completedAt: "2026-03-25T12:30:00.000Z",
+      patches: [
+        [
+          "*** Begin Patch",
+          `*** Add File: ${filePath}`,
+          "+created",
+          "*** End Patch"
+        ].join("\n")
+      ],
+      prePatchFiles: {
+        [filePath]: {
+          existed: true,
+          text: afterText
+        }
+      }
+    });
+
+    assert.strictEqual(result.created, true);
+    const manifest = JSON.parse(fs.readFileSync(result.snapshot.manifestPath, "utf8"));
+    assert.strictEqual(manifest.files.length, 1);
+    assert.strictEqual(manifest.files[0].kind, "add");
+    assert.strictEqual(manifest.files[0].restoreMode, "delete");
+    assert.strictEqual(manifest.files[0].beforeBlobId, null);
+    assert.strictEqual(await store.readBlob(manifest.files[0].afterBlobId), afterText);
+  });
+}
+
 async function testSnapshotStorePrefersReconstructedBeforeAndLogsMismatch() {
   const codexRoot = makeTempDir();
   const vscode = makeVscodeMock(codexRoot);
@@ -668,15 +714,192 @@ async function testSnapshotStoreCapturesMixedTurnNetEffectsAcrossFiles() {
   });
 }
 
+async function testSnapshotStoreKeepsRenameAndFollowupUpdateAsSingleFileHistory() {
+  const codexRoot = makeTempDir();
+  const vscode = makeVscodeMock(codexRoot);
+
+  await withMockedVscode(vscode, async () => {
+    const { SnapshotStore } = requireFresh("../src/snapshotStore");
+    const store = new SnapshotStore();
+    await store.initialize();
+
+    const workRoot = path.join(codexRoot, "workspace");
+    fs.mkdirSync(workRoot, { recursive: true });
+    const oldPath = path.join(workRoot, "old.txt");
+    const newPath = path.join(workRoot, "new.txt");
+    fs.writeFileSync(newPath, "after-two\n");
+
+    const result = await store.createSnapshot({
+      sessionId: "session-11",
+      turnId: "turn-11",
+      prompt: "rename and keep editing",
+      completedAt: "2026-03-25T20:00:00.000Z",
+      patches: [
+        [
+          "*** Begin Patch",
+          `*** Update File: ${oldPath}`,
+          `*** Move to: ${newPath}`,
+          "@@",
+          "-before",
+          "+after-one",
+          "*** End Patch"
+        ].join("\n"),
+        [
+          "*** Begin Patch",
+          `*** Update File: ${newPath}`,
+          "@@",
+          "-after-one",
+          "+after-two",
+          "*** End Patch"
+        ].join("\n")
+      ],
+      prePatchFiles: {
+        [oldPath]: {
+          existed: true,
+          text: "before\n"
+        }
+      }
+    });
+
+    assert.strictEqual(result.created, true);
+    const manifest = JSON.parse(fs.readFileSync(result.snapshot.manifestPath, "utf8"));
+    assert.strictEqual(manifest.files.length, 1);
+    assert.strictEqual(manifest.files[0].path, newPath);
+    assert.strictEqual(manifest.files[0].restorePath, oldPath);
+    assert.strictEqual(await store.readBlob(manifest.files[0].beforeBlobId), "before\n");
+    assert.strictEqual(await store.readBlob(manifest.files[0].afterBlobId), "after-two\n");
+  });
+}
+
+async function testSnapshotStoreCollectConflictsChecksBothSidesOfRenameDuringRedo() {
+  const codexRoot = makeTempDir();
+  const vscode = makeVscodeMock(codexRoot);
+
+  await withMockedVscode(vscode, async () => {
+    const { SnapshotStore } = requireFresh("../src/snapshotStore");
+    const store = new SnapshotStore();
+    await store.initialize();
+
+    const workRoot = path.join(codexRoot, "workspace");
+    fs.mkdirSync(workRoot, { recursive: true });
+    const oldPath = path.join(workRoot, "old.txt");
+    const newPath = path.join(workRoot, "new.txt");
+    const beforeBlobId = await store.writeBlob("before\n");
+    const afterBlobId = await store.writeBlob("after\n");
+
+    fs.writeFileSync(oldPath, "manual old edit\n");
+    fs.writeFileSync(newPath, "manual new edit\n");
+
+    const manifestPath = path.join(store.recordsDir, "rename-conflict.json");
+    fs.writeFileSync(
+      manifestPath,
+      JSON.stringify(
+        {
+          id: "rename-conflict",
+          sessionId: "session-12",
+          sessionTitle: "rename conflict",
+          turnId: "turn-12",
+          prompt: "rename file",
+          completedAt: "2026-03-25T21:00:00.000Z",
+          sessionPath: "/tmp/session12.jsonl",
+          files: [
+            {
+              path: newPath,
+              originalPath: oldPath,
+              kind: "update",
+              restoreMode: "write",
+              restorePath: oldPath,
+              deleteOnRestore: [newPath],
+              deleteOnRedo: [oldPath],
+              beforeBlobId,
+              afterBlobId
+            }
+          ]
+        },
+        null,
+        2
+      )
+    );
+
+    store.index = {
+      version: 3,
+      turns: [
+        {
+          id: "rename-conflict",
+          type: "ai_turn",
+          active: true,
+          sessionId: "session-12",
+          sessionTitle: "rename conflict",
+          turnId: "turn-12",
+          prompt: "rename file",
+          completedAt: "2026-03-25T21:00:00.000Z",
+          fileCount: 1,
+          manifestPath,
+          sessionPath: "/tmp/session12.jsonl"
+        }
+      ]
+    };
+    await store.saveIndex();
+
+    const plan = await store.planRestore("rename-conflict");
+    const conflicts = await store.collectConflicts(plan, "redo");
+    assert.strictEqual(conflicts.length, 2);
+    assert.ok(conflicts.some((entry) => entry.path === oldPath));
+    assert.ok(conflicts.some((entry) => entry.path === newPath));
+  });
+}
+
+async function testSnapshotStorePrepareDiffPreviewShowsEmptyBeforeForPureAdd() {
+  const codexRoot = makeTempDir();
+  const vscode = makeVscodeMock(codexRoot);
+
+  await withMockedVscode(vscode, async () => {
+    const { SnapshotStore } = requireFresh("../src/snapshotStore");
+    const store = new SnapshotStore();
+    await store.initialize();
+
+    const workRoot = path.join(codexRoot, "workspace");
+    fs.mkdirSync(workRoot, { recursive: true });
+    const filePath = path.join(workRoot, "added.txt");
+    fs.writeFileSync(filePath, "created\n");
+
+    const result = await store.createSnapshot({
+      sessionId: "session-13",
+      turnId: "turn-13",
+      prompt: "add file",
+      completedAt: "2026-03-25T22:00:00.000Z",
+      patches: [
+        [
+          "*** Begin Patch",
+          `*** Add File: ${filePath}`,
+          "+created",
+          "*** End Patch"
+        ].join("\n")
+      ]
+    });
+
+    const plan = await store.planRestore(result.snapshot.id);
+    const preview = await store.prepareDiffPreview(plan, plan.entries[0]);
+    assert.strictEqual(path.basename(preview.leftUri.fsPath), "added.txt");
+    assert.strictEqual(path.basename(preview.rightUri.fsPath), "added.txt");
+    assert.strictEqual(fs.readFileSync(preview.leftUri.fsPath, "utf8"), "");
+    assert.strictEqual(fs.readFileSync(preview.rightUri.fsPath, "utf8"), "created\n");
+  });
+}
+
 module.exports = {
   testSnapshotStoreRestoreAndReapplyStateMachine,
   testSnapshotStoreRestoreAddThenDeleteOnRestore,
   testSnapshotStoreTreatsDeleteThenAddSamePathAsUpdateUsingPrePatchState,
+  testSnapshotStoreKeepsPureAddAsAddEvenWhenCapturedPrePatchLooksExisting,
   testSnapshotStorePrefersReconstructedBeforeAndLogsMismatch,
   testSnapshotStoreFallsBackToCapturedBeforeWhenReconstructionFails,
   testSnapshotStoreRejectsSnapshotWhenReconstructionFailsWithoutCapturedBefore,
   testSnapshotStoreRestoreAndRedoMoveToKeepsSingleLivePath,
   testSnapshotStoreIgnoresTrackerEventWriteFailure,
   testSnapshotStoreRedoMoveToSupportsLegacyManifestWithoutDeleteOnRedo,
-  testSnapshotStoreCapturesMixedTurnNetEffectsAcrossFiles
+  testSnapshotStoreCapturesMixedTurnNetEffectsAcrossFiles,
+  testSnapshotStoreKeepsRenameAndFollowupUpdateAsSingleFileHistory,
+  testSnapshotStoreCollectConflictsChecksBothSidesOfRenameDuringRedo,
+  testSnapshotStorePrepareDiffPreviewShowsEmptyBeforeForPureAdd
 };
